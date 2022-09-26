@@ -16,9 +16,12 @@
 # specific language governing permissions and limitations
 # under the License.
 
-import os.path
-from typing import TYPE_CHECKING, Optional, Sequence
+from __future__ import annotations
 
+import os.path
+from typing import TYPE_CHECKING, Sequence
+
+from airflow.exceptions import AirflowException
 from airflow.models import BaseOperator
 from airflow.providers.amazon.aws.hooks.glue import GlueJobHook
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
@@ -72,17 +75,17 @@ class GlueJobOperator(BaseOperator):
         *,
         job_name: str = 'aws_glue_default_job',
         job_desc: str = 'AWS Glue Job with Airflow',
-        script_location: Optional[str] = None,
-        concurrent_run_limit: Optional[int] = None,
-        script_args: Optional[dict] = None,
+        script_location: str | None = None,
+        concurrent_run_limit: int | None = None,
+        script_args: dict | None = None,
         retry_limit: int = 0,
-        num_of_dpus: Optional[int] = None,
+        num_of_dpus: int | None = None,
         aws_conn_id: str = 'aws_default',
-        region_name: Optional[str] = None,
-        s3_bucket: Optional[str] = None,
-        iam_role_name: Optional[str] = None,
-        create_job_kwargs: Optional[dict] = None,
-        run_job_kwargs: Optional[dict] = None,
+        region_name: str | None = None,
+        s3_bucket: str | None = None,
+        iam_role_name: str | None = None,
+        create_job_kwargs: dict | None = None,
+        run_job_kwargs: dict | None = None,
         wait_for_completion: bool = True,
         verbose: bool = False,
         **kwargs,
@@ -106,7 +109,7 @@ class GlueJobOperator(BaseOperator):
         self.wait_for_completion = wait_for_completion
         self.verbose = verbose
 
-    def execute(self, context: 'Context'):
+    def execute(self, context: Context):
         """
         Executes AWS Glue Job from Airflow
 
@@ -143,13 +146,20 @@ class GlueJobOperator(BaseOperator):
         )
         glue_job_run = glue_job.initialize_job(self.script_args, self.run_job_kwargs)
         if self.wait_for_completion:
+            failed_states = ['FAILED', 'TIMEOUT']
             glue_job_run = glue_job.job_completion(self.job_name, glue_job_run['JobRunId'], self.verbose)
-            self.log.info(
-                "AWS Glue Job: %s status: %s. Run Id: %s",
-                self.job_name,
-                glue_job_run['JobRunState'],
-                glue_job_run['JobRunId'],
-            )
+            if glue_job_run['JobRunState'] in failed_states:
+                job_run_state = glue_job_run['JobRunState']
+                job_run_id = glue_job_run['JobRunId']
+                msg = f'''AWS Glue Job: {self.job_name} status: {job_run_state}. Run Id: {job_run_id}'''
+                raise AirflowException(msg)
+            else:
+                self.log.info(
+                    "AWS Glue Job: %s status: %s. Run Id: %s",
+                    self.job_name,
+                    glue_job_run['JobRunState'],
+                    glue_job_run['JobRunId'],
+                )
         else:
             self.log.info("AWS Glue Job: %s. Run Id: %s", self.job_name, glue_job_run['JobRunId'])
         return glue_job_run['JobRunId']
